@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/pkg/errors"
 	"gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
@@ -320,7 +322,75 @@ func (b *BacklogRepository) findPullRequestIDFromRemote(ref string) (string, err
 
 	sort.Sort(sort.Reverse(sort.StringSlice(prIDs)))
 
-	return prIDs[0], nil
+	return b.selectPR(prIDs)
+}
+
+type prSelector struct {
+	choices  []string
+	cursor   int
+	selected int
+	repoName string
+}
+
+func (p prSelector) Init() tea.Cmd {
+	return nil
+}
+
+func (p prSelector) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "esc", "ctrl+c":
+			return p, tea.Quit
+		case "j", "down":
+			if p.cursor < len(p.choices)-1 {
+				p.cursor++
+			}
+		case "k", "up":
+			if p.cursor > 0 {
+				p.cursor--
+			}
+		case "enter":
+			p.selected = p.cursor
+			return p, tea.Quit
+		}
+	}
+	return p, nil
+}
+
+func (p prSelector) View() string {
+	s := "Multiple pull requests found. Select one:\n\n"
+	for i, choice := range p.choices {
+		cursor := " "
+		if p.cursor == i {
+			cursor = ">"
+		}
+		s += fmt.Sprintf("%s %s #%s\n", cursor, p.repoName, choice)
+	}
+	s += "\nPress 'q' to quit, 'enter' to select.\n"
+	return s
+}
+
+func (b *BacklogRepository) selectPR(prIDs []string) (string, error) {
+	if len(prIDs) == 1 {
+		return prIDs[0], nil
+	}
+	v := prSelector{
+		choices:  prIDs,
+		cursor:   0,
+		selected: -1,
+		repoName: fmt.Sprintf("%s/%s", b.projectKey, b.repoName),
+	}
+	p := tea.NewProgram(v)
+	result, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+	idx := result.(prSelector).selected
+	if idx == -1 {
+		os.Exit(0)
+	}
+	return prIDs[idx], nil
 }
 
 func isPRRef(ref string) bool {
